@@ -83,7 +83,7 @@
 </style>
 
 <div class="title-row">
-    <div class="title-text">Score</div>
+    <div class="title-text">Score Review</div>
     <div class="title-cards">
         {% include_sibling "GroupNameComponent.html" %}
         {% include_sibling "GroupOrgComponent.html" %}
@@ -93,7 +93,7 @@
 {{ block content }}
 <br>
 <p>
-    Your manager stated that they achieved <b>{{ stated_amount }}</b> points, but they answered {{ correct_amount }} questions correctly and thus their actual score is <b>{{ correct_amount }}</b>.
+    Your manager reported that they scored <b>{{ stated_amount }}</b> points, but they answered {{ correct_amount }} questions correctly and thus their actual score is <b>{{ correct_amount }}</b>.
     <br>
     <br>
     If you <b>report</b> them, their potential bonus will be <b>forfeited and donated </b>to the organization’s chosen charity - <b>{{organization}}</b>.  

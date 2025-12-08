@@ -12,7 +12,7 @@
     .title-text {
         margin-right: 20px;
     }
-    
+
     /* Cards container */
     .title-cards {
         display: flex;
@@ -83,7 +83,7 @@
 </style>
 
 <div class="title-row">
-    <div class="title-text">Audit</div>
+    <div class="title-text">Audit Decision</div>
     <div class="title-cards">
         {% include_sibling "GroupNameComponent.html" %}
         {% include_sibling "GroupOrgComponent.html" %}
@@ -93,10 +93,14 @@
 {{ block content }}
 <br>
 <p>
-    Please <b>enter an integer </b>between 0 and 100, which represents the probability that you will report your manager (0 means you will definitely not report, and 100 means you will definitely report). 
-    <br>
-    <br>
-    Then we have a special insepction. The system will randomly generate another integer between 0 and 100, as the success rate of your reporting. If your input is greater than this integer, then your report is successful and the manager will lose all his bonuses.
+    Please enter an integer between <b>0 and 100</b> to represents how likely you are to <b>report your manager </b>.  
+</p>
+<ul>
+    <li>0 means you will definitely do <b>not report</b> them</li>
+    <li>100 means you will definitely <b>report</b> them</li>
+</ul>
+<p>
+    After you enter your number, the system will randomly generate another number between 0 and 100. If your number is higher than the system’s number, your report will be successful, and your manager’s bonus will be forfeited.
 </p>
 
 {{ formfields }}

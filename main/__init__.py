@@ -182,7 +182,7 @@ class Player(BasePlayer):
     manager_threshold_integer = models.StringField()
 
     prefer = models.StringField(
-        label="<b>Please select your favorite painting from the options below:</b>",
+        label="<b>Please select your preferred painting from the options below:</b>",
         choices=C.PREFER_CHOICES,
         widget=widgets.RadioSelectHorizontal
     )
@@ -200,7 +200,7 @@ class Player(BasePlayer):
     report_rand_int = models.IntegerField()
 
     report_probability = models.IntegerField(
-        label='<b>What is the probability that you will report your manager?</b>',
+        label='<b>How likely are you to report your manager?</b>',
         min=0,
         max=100,
     )
