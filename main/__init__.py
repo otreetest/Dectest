@@ -2,6 +2,7 @@ import random
 import csv
 import os
 from otree.api import *
+from datetime import datetime
 
 doc = """
 Two-stage experiment with manager-employee matching
@@ -125,7 +126,7 @@ class C(BaseConstants):
 
 
 class Subsession(BaseSubsession):
-    used_manager_ids = models.StringField(initial="")
+    pass
 
 
 def creating_session(self:Subsession):
@@ -147,20 +148,50 @@ def creating_session(self:Subsession):
             self.session.vars['manager_data'] = manager_data
             self.session.vars['manager_data_header'] = header
             self.session.vars['manager_data_columns'] = column_indices
-            # Initialize the list of used manager IDs
-            self.used_manager_ids = ""
+            
+            self.session.vars['used_manager_ids'] = []
+            
+            self.session.vars['session_start_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            num_players = len(self.get_players())
+            num_managers = len(manager_data)
+            print(f"\n{'='*50}")
+            print(f"SESSION INITIALIZATION")
+            print(f"{'='*50}")
+            print(f"Session code: {self.session.code}")
+            print(f"Session start: {self.session.vars['session_start_time']}")
+            print(f"Players in session: {num_players}")
+            print(f"Managers available: {num_managers}")
+            print(f"CSV columns: {header}")
+            
+            if num_managers < num_players:
+                print(f"\n⚠️  WARNING: Not enough managers!")
+                print(f"   Need: {num_players}")
+                print(f"   Have: {num_managers}")
+                print(f"   Shortage: {num_players - num_managers}")
+            else:
+                print(f"\n✓ Sufficient managers available")
+                print(f"  Surplus: {num_managers - num_players}")
+            print(f"{'='*50}\n")
+                
         except Exception as e:
-            print(f"Error loading manager data: {e}")
+            print(f"\n❌ Error loading manager data: {e}")
+            import traceback
+            traceback.print_exc()
             # Create empty data as fallback
             self.session.vars['manager_data'] = []
             self.session.vars['manager_data_header'] = []
             self.session.vars['manager_data_columns'] = {}
+            self.session.vars['used_manager_ids'] = []
     else:
-        print(f"Manager data file not found: {C.MANAGER_DATA_PATH}")
+        print(f"\n❌ Manager data file not found: {C.MANAGER_DATA_PATH}")
+        print(f"   Current directory: {current_dir}")
+        print(f"   Please ensure input.csv exists in the correct location")
         # Create empty data as fallback
         self.session.vars['manager_data'] = []
         self.session.vars['manager_data_header'] = []
         self.session.vars['manager_data_columns'] = {}
+        self.session.vars['used_manager_ids'] = []
 
 
 class Group(BaseGroup):
@@ -175,7 +206,9 @@ class Player(BasePlayer):
     
     # Store the matched manager's ID for reference
     matched_manager_id = models.StringField()
-    
+    manager_match_order = models.IntegerField(blank=True)
+    manager_match_timestamp = models.StringField(blank=True)
+
     # Store the matched manager's data for reference
     manager_stated_amount = models.StringField()
     manager_correct_amount = models.StringField()
@@ -317,52 +350,91 @@ class Role(Page):
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
         # Match the player with a manager when they first enter the experiment
-        subsession = player.subsession
         manager_data = player.session.vars.get('manager_data', [])
         column_indices = player.session.vars.get('manager_data_columns', {})
         
+        if 'used_manager_ids' not in player.session.vars:
+            player.session.vars['used_manager_ids'] = []
+        
+        used_ids = player.session.vars['used_manager_ids']
+        
+        print(f"\n{'='*50}")
+        print(f"MATCHING PLAYER {player.id_in_group}")
+        print(f"{'='*50}")
+        print(f"Participant code: {player.participant.code}")
+        print(f"Total managers in CSV: {len(manager_data)}")
+        print(f"Already used managers: {len(used_ids)}")
+        if used_ids:
+            print(f"Used manager IDs: {used_ids}")
+        
         # If there's no manager data, we can't proceed
         if not manager_data:
-            print("Warning: No manager data available for matching")
+            print("❌ ERROR: No manager data available for matching")
+            player.group_team = "Not assigned (No data)"
+            player.group_organization = "Not assigned (No data)"
+            player.group_prefer = "Not assigned"
+            player.matched_manager_id = "ERROR_NO_DATA"
+            player.manager_match_order = -1
+            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"{'='*50}\n")
             return
         
-        # Get the list of already used manager IDs
-        used_ids = subsession.used_manager_ids.split(',') if subsession.used_manager_ids else []
-
-        # Filter out already used manager IDs
+        # Get the ID column
         id_column = column_indices.get('participantid_in_session', -1)
         if id_column == -1:
-            print("Warning: Could not find participantid_in_session column")
+            print("❌ ERROR: Could not find participantid_in_session column")
+            print(f"Available columns: {list(column_indices.keys())}")
+            player.group_team = "Not assigned (Column error)"
+            player.group_organization = "Not assigned (Column error)"
+            player.group_prefer = "Not assigned"
+            player.matched_manager_id = "ERROR_NO_COLUMN"
+            player.manager_match_order = -1
+            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"{'='*50}\n")
             return
-            
+        
+        # Filter out already used manager IDs
         available_managers = [row for row in manager_data 
                              if row[id_column] not in used_ids]
         
+        print(f"Available managers: {len(available_managers)}")
+        
         # If no managers are available, we can't proceed
         if not available_managers:
-            print("Warning: No available managers for matching")
+            print("❌ ERROR: No available managers left for matching")
+            print(f"Total managers: {len(manager_data)}")
+            print(f"All managers used: {used_ids}")
+            player.group_team = "Not assigned (No managers)"
+            player.group_organization = "Not assigned (No managers)"
+            player.group_prefer = "Not assigned"
+            player.matched_manager_id = "ERROR_NO_AVAILABLE"
+            player.manager_match_order = -1
+            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"{'='*50}\n")
             return
         
         # Randomly select an available manager
         selected_manager = random.choice(available_managers)
         manager_id = selected_manager[id_column]
         
+        player.manager_match_order = len(used_ids) + 1
+        
+        player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        print(f"✓ Selected manager: {manager_id}")
+        print(f"  Match order: {player.manager_match_order}")
+        print(f"  Match time: {player.manager_match_timestamp}")
+        
+        player.session.vars['used_manager_ids'].append(manager_id)
+        
         # Store the matched manager's ID in player's data
         player.matched_manager_id = manager_id
-        
-        # Add this manager ID to the used list
-        used_ids.append(manager_id)
-        subsession.used_manager_ids = ','.join(used_ids)
-        
-        # Store the manager's preferred painting in the group
         player.group_manager_id = manager_id
         
         # Get the manager's preferred painting from the data
         prefer_column = column_indices.get('main1playerprefer', -1)
         if prefer_column != -1 and prefer_column < len(selected_manager):
             player.group_manager_prefer = selected_manager[prefer_column]
-
-            # Set the group's prefer based on the manager's preference
             player.group_prefer = player.group_manager_prefer
             
             # Map the preference to a team
@@ -372,8 +444,18 @@ class Role(Page):
             }
             if player.group_prefer in painting_mapping:
                 player.group_team = painting_mapping[player.group_prefer]
+                print(f"✓ Team assigned: {player.group_team}")
+            else:
+                print(f"⚠️  Warning: Unknown preference value: {player.group_prefer}")
+                player.group_team = "Not assigned (Invalid preference)"
             
             # Randomly select an organization
+            player.group_organization = random.choice(C.CHALLENGE_CHOICES)
+            print(f"✓ Organization assigned: {player.group_organization}")
+        else:
+            print(f"⚠️  Warning: Could not find preference column or data")
+            player.group_prefer = "Not assigned"
+            player.group_team = "Not assigned"
             player.group_organization = random.choice(C.CHALLENGE_CHOICES)
         
         # Store manager's stated amount and correct amount for later use
@@ -383,13 +465,25 @@ class Role(Page):
         
         if stated_amount_column != -1 and stated_amount_column < len(selected_manager):
             player.manager_stated_amount = selected_manager[stated_amount_column]
+            print(f"  Manager stated amount: {player.manager_stated_amount}")
+        else:
+            player.manager_stated_amount = "Not available"
         
         if correct_amount_column != -1 and correct_amount_column < len(selected_manager):
             player.manager_correct_amount = selected_manager[correct_amount_column]
+            print(f"  Manager correct amount: {player.manager_correct_amount}")
+        else:
+            player.manager_correct_amount = "Not available"
             
         # Store the threshold_integer value
         if threshold_integer_column != -1 and threshold_integer_column < len(selected_manager):
             player.manager_threshold_integer = selected_manager[threshold_integer_column]
+            print(f"  Manager threshold: {player.manager_threshold_integer}")
+        else:
+            player.manager_threshold_integer = "8"  # Default value
+        
+        print(f"✓ MATCHING COMPLETE")
+        print(f"{'='*50}\n")
 
 
 class Painting(Page):
