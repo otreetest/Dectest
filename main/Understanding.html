@@ -1,18 +1,41 @@
-{{ block title }}
+{% block title %}
 Check Point
-{{ endblock }}
-{{ block content }}
-<p>
-    The following short questions check your understanding of the scenario before you continue:
-    <br>
-    <br>
-    (the left painting is Klee, and the right painting is Kandinsky)
+{% endblock %}
 
+{% block content %}
 
-</p>
-{{ formfields }}
-<br>
-<p>From the next page onward, you’ll see identity reminder cards in the top right corner of each screen. </p>
-{{ next_button }}
+<style>
+.instruction-box {
+    background-color: #fff3e0;
+    border-left: 4px solid #ff9800;
+    padding: 15px;
+    margin: 20px 0;
+}
 
-{{ endblock }}
+.info-box {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196F3;
+    padding: 15px;
+    margin: 20px 0;
+}
+</style>
+
+<div class="instruction-box">
+    <p>
+        <strong>The following short questions check your understanding of the scenario before you continue.</strong>
+        <br><br>
+        You must answer all questions correctly to proceed.
+        <br><br>
+        <em>Reminder: The left painting is Klee, and the right painting is Kandinsky.</em>
+    </p>
+</div>
+
+{% formfields %}
+
+<div class="info-box">
+    <strong>Note:</strong> From the next page onward, you'll see identity reminder cards in the top right corner of each screen.
+</div>
+
+{% next_button %}
+
+{% endblock %}

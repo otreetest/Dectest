@@ -267,6 +267,9 @@ class Player(BasePlayer):
         blank=False
     )
 
+    understanding_attempts = models.IntegerField(initial=0)
+    understanding_first_try_correct = models.BooleanField(initial=False)
+
     SM1 = models.IntegerField(label=C.SURVEY_M_QUESTIONS[0], choices=range(1, 6), widget=widgets.RadioSelectHorizontal)
     SM2 = models.IntegerField(label=C.SURVEY_M_QUESTIONS[1], choices=range(1, 6), widget=widgets.RadioSelectHorizontal)
     SM3 = models.IntegerField(label=C.SURVEY_M_QUESTIONS[2], choices=range(1, 6), widget=widgets.RadioSelectHorizontal)
@@ -580,6 +583,92 @@ class Score(Page):
 class Understanding(Page):
     form_model = 'player'
     form_fields = ['choiceE','choiceM','choiceT','choiceO']
+    
+    @staticmethod
+    def vars_for_template(player: Player):
+        return {
+            'team': player.field_maybe_none('group_team') or 'Not assigned',
+            'organization': player.field_maybe_none('group_organization') or 'Not assigned'
+        }
+    
+    @staticmethod
+    def error_message(player: Player, values):
+        # Increment attempts counter
+        if player.understanding_attempts is None:
+            player.understanding_attempts = 0
+        player.understanding_attempts += 1
+        
+        # Map the preferences to correct answers
+        painting_mapping = {
+            'Left': 'Klee',
+            'Right': 'Kandinsky'
+        }
+        
+        # Get player's own preference
+        player_prefer = player.field_maybe_none('prefer')
+        if player_prefer:
+            correct_choiceE = painting_mapping.get(player_prefer, 'Unknown')
+        else:
+            correct_choiceE = 'Unknown'
+        
+        # Get manager's preference (which is also group_prefer)
+        manager_prefer = player.field_maybe_none('group_prefer')
+        if manager_prefer:
+            correct_choiceM = painting_mapping.get(manager_prefer, 'Unknown')
+        else:
+            correct_choiceM = 'Unknown'
+        
+        # Get team (already mapped to Klee/Kandinsky)
+        correct_choiceT = player.field_maybe_none('group_team') or 'Unknown'
+        
+        # Get organization
+        correct_choiceO = player.field_maybe_none('group_organization') or 'Unknown'
+        
+        # Debug print
+        print(f"\n=== Understanding Check Debug ===")
+        print(f"Player ID: {player.id_in_group}")
+        print(f"Attempt: {player.understanding_attempts}")
+        print(f"Correct E: {correct_choiceE}, Answer: {values.get('choiceE')}")
+        print(f"Correct M: {correct_choiceM}, Answer: {values.get('choiceM')}")
+        print(f"Correct T: {correct_choiceT}, Answer: {values.get('choiceT')}")
+        print(f"Correct O: {correct_choiceO}, Answer: {values.get('choiceO')}")
+        
+        # Check if all answers are correct
+        errors = []
+        
+        if values.get('choiceE') != correct_choiceE:
+            errors.append('Question 1 (Your painting): Incorrect answer.')
+        
+        if values.get('choiceM') != correct_choiceM:
+            errors.append('Question 2 (Manager\'s painting): Incorrect answer.')
+        
+        if values.get('choiceT') != correct_choiceT:
+            errors.append('Question 3 (Team painting): Incorrect answer.')
+        
+        if values.get('choiceO') != correct_choiceO:
+            errors.append('Question 4 (Organization\'s charity): Incorrect answer.')
+        
+        # If this is the first attempt and all answers are correct, mark it
+        if player.understanding_attempts == 1 and len(errors) == 0:
+            player.understanding_first_try_correct = True
+            print("First try correct!")
+        elif len(errors) == 0:
+            player.understanding_first_try_correct = False
+            print("Correct on later attempt")
+        
+        print(f"Errors found: {len(errors)}")
+        print("=" * 35)
+        
+        # Return errors if any exist
+        if errors:
+            error_message = '<strong>Please review your answers. The following questions are incorrect:</strong><br><br>'
+            error_message += '<br>'.join(errors)
+            error_message += '<br><br><em>Please correct your answers and try again.</em>'
+            
+            return error_message
+        
+        # No errors means all correct - allow to proceed
+        return None
 
 
 class Audit(Page):
