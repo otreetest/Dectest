@@ -772,12 +772,33 @@ class Result(Page):
     def vars_for_template(player: Player):
         report_status = player.session.vars.get('report', False)
         
+        # Get manager's stated amount
+        try:
+            stated_amount = int(player.manager_stated_amount)
+        except (ValueError, TypeError):
+            stated_amount = 0
+        
+        # Calculate bonus
+        if stated_amount > 12:
+            bonus_amount = (stated_amount - 12) * 0.50
+        else:
+            bonus_amount = 0
+        
+        # Calculate total payment
+        if report_status:
+            manager_total_payment = 1.00  # Only base pay
+        else:
+            manager_total_payment = 1.00 + bonus_amount  # Base + bonus
         
         return {
             'manager_id': player.field_maybe_none('matched_manager_id') or 'Not matched',
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
             'report': report_status,
+            'stated_amount': player.manager_stated_amount,
+            'correct_amount': player.manager_correct_amount,
+            'bonus_amount': f"{bonus_amount:.2f}",
+            'manager_total_payment': f"{manager_total_payment:.2f}",
             'player_payoff': player.payoff
         }
 
@@ -787,6 +808,7 @@ page_sequence = [
     Painting,
     MatchingResult,
     Charity,
+    Survey_c,
     Organization,
     Understanding,
     BeforeIQTest,
@@ -795,7 +817,6 @@ page_sequence = [
     Audit,
     Survey_m,
     Survey_o,
-    Survey_c,
     Big5, 
     Comparison, 
     Dictator, 
