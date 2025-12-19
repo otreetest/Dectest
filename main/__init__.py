@@ -193,7 +193,6 @@ def creating_session(self:Subsession):
         self.session.vars['manager_data_columns'] = {}
         self.session.vars['used_manager_ids'] = []
 
-
 class Group(BaseGroup):
     pass
 
@@ -352,12 +351,17 @@ def get_value_from_row(row, column_indices, column_name, default=""):
 class Role(Page):
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
-        # Match the player with a manager when they first enter the experiment
         manager_data = player.session.vars.get('manager_data', [])
         column_indices = player.session.vars.get('manager_data_columns', {})
         
         if 'used_manager_ids' not in player.session.vars:
             player.session.vars['used_manager_ids'] = []
+        
+        # Initialize counters for balanced matching
+        if 'same_pairs_count' not in player.session.vars:
+            player.session.vars['same_pairs_count'] = 0
+        if 'different_pairs_count' not in player.session.vars:
+            player.session.vars['different_pairs_count'] = 0
         
         used_ids = player.session.vars['used_manager_ids']
         
@@ -365,125 +369,132 @@ class Role(Page):
         print(f"MATCHING PLAYER {player.id_in_group}")
         print(f"{'='*50}")
         print(f"Participant code: {player.participant.code}")
-        print(f"Total managers in CSV: {len(manager_data)}")
-        print(f"Already used managers: {len(used_ids)}")
-        if used_ids:
-            print(f"Used manager IDs: {used_ids}")
         
-        # If there's no manager data, we can't proceed
+        # Check if we have manager data
         if not manager_data:
-            print("❌ ERROR: No manager data available for matching")
-            player.group_team = "Not assigned (No data)"
-            player.group_organization = "Not assigned (No data)"
-            player.group_prefer = "Not assigned"
+            print("❌ ERROR: No manager data available")
             player.matched_manager_id = "ERROR_NO_DATA"
-            player.manager_match_order = -1
-            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"{'='*50}\n")
             return
         
-        # Get the ID column
+        # Get column indices
         id_column = column_indices.get('participantid_in_session', -1)
-        if id_column == -1:
-            print("❌ ERROR: Could not find participantid_in_session column")
-            print(f"Available columns: {list(column_indices.keys())}")
-            player.group_team = "Not assigned (Column error)"
-            player.group_organization = "Not assigned (Column error)"
-            player.group_prefer = "Not assigned"
+        prefer_column = column_indices.get('main1playerprefer', -1)
+        
+        if id_column == -1 or prefer_column == -1:
+            print("❌ ERROR: Required columns not found")
             player.matched_manager_id = "ERROR_NO_COLUMN"
-            player.manager_match_order = -1
-            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"{'='*50}\n")
             return
         
-        # Filter out already used manager IDs
+        # Filter available managers
         available_managers = [row for row in manager_data 
                              if row[id_column] not in used_ids]
         
-        print(f"Available managers: {len(available_managers)}")
-        
-        # If no managers are available, we can't proceed
         if not available_managers:
-            print("❌ ERROR: No available managers left for matching")
-            print(f"Total managers: {len(manager_data)}")
-            print(f"All managers used: {used_ids}")
-            player.group_team = "Not assigned (No managers)"
-            player.group_organization = "Not assigned (No managers)"
-            player.group_prefer = "Not assigned"
+            print("❌ ERROR: No available managers")
             player.matched_manager_id = "ERROR_NO_AVAILABLE"
-            player.manager_match_order = -1
-            player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"{'='*50}\n")
             return
         
-        # Randomly select an available manager
-        selected_manager = random.choice(available_managers)
+        # Get current balance status
+        same_count = player.session.vars['same_pairs_count']
+        diff_count = player.session.vars['different_pairs_count']
+        balance_gap = same_count - diff_count
+        
+        print(f"Current balance - Same: {same_count}, Different: {diff_count}, Gap: {balance_gap}")
+        
+        # Separate available managers by their preference
+        managers_left = [m for m in available_managers if m[prefer_column] == 'Left']
+        managers_right = [m for m in available_managers if m[prefer_column] == 'Right']
+        
+        print(f"Available - Left managers: {len(managers_left)}, Right managers: {len(managers_right)}")
+        
+        # BALANCED MATCHING ALGORITHM
+        selected_manager = None
+        pair_type = None
+        
+        # Strategy: maintain balance between same and different pairs
+        if balance_gap > 2:  # Too many same pairs
+            # Prioritize different pairs
+            print("⚖️ Balancing: Need more DIFFERENT pairs")
+            # Employee hasn't chosen yet, so we need to wait
+            # For now, we'll bias the selection but can't guarantee different
+            # We'll implement a probabilistic approach
+            
+            # Calculate probabilities based on available managers
+            total_available = len(available_managers)
+            prob_different = min(0.8, 0.5 + (balance_gap * 0.1))  # Increase probability
+            
+            if random.random() < prob_different:
+                # Try to select a manager with opposite preference
+                # Since we don't know employee's choice yet, we balance the pool
+                # Select from the minority group to increase different pair chances
+                if len(managers_left) < len(managers_right):
+                    selected_manager = random.choice(managers_left) if managers_left else random.choice(managers_right)
+                else:
+                    selected_manager = random.choice(managers_right) if managers_right else random.choice(managers_left)
+            else:
+                selected_manager = random.choice(available_managers)
+                
+        elif balance_gap < -2:  # Too many different pairs
+            # Prioritize same pairs
+            print("⚖️ Balancing: Need more SAME pairs")
+            
+            prob_same = min(0.8, 0.5 + (abs(balance_gap) * 0.1))
+            
+            if random.random() < prob_same:
+                # Select from the majority group to increase same pair chances
+                if len(managers_left) > len(managers_right):
+                    selected_manager = random.choice(managers_left) if managers_left else random.choice(managers_right)
+                else:
+                    selected_manager = random.choice(managers_right) if managers_right else random.choice(managers_left)
+            else:
+                selected_manager = random.choice(available_managers)
+                
+        else:  # Balanced or close to balanced
+            print("✓ Currently balanced, random selection")
+            selected_manager = random.choice(available_managers)
+        
+        # Record the match
         manager_id = selected_manager[id_column]
-        
+        player.matched_manager_id = manager_id
+        player.group_manager_id = manager_id
         player.manager_match_order = len(used_ids) + 1
-        
         player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         print(f"✓ Selected manager: {manager_id}")
-        print(f"  Match order: {player.manager_match_order}")
-        print(f"  Match time: {player.manager_match_timestamp}")
         
-        player.session.vars['used_manager_ids'].append(manager_id)
+        # Store manager's preference
+        player.group_manager_prefer = selected_manager[prefer_column]
+        player.group_prefer = player.group_manager_prefer
         
-        # Store the matched manager's ID in player's data
-        player.matched_manager_id = manager_id
-        player.group_manager_id = manager_id
+        # Map preference to team
+        painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
+        player.group_team = painting_mapping.get(player.group_prefer, "Not assigned")
         
-        # Get the manager's preferred painting from the data
-        prefer_column = column_indices.get('main1playerprefer', -1)
-        if prefer_column != -1 and prefer_column < len(selected_manager):
-            player.group_manager_prefer = selected_manager[prefer_column]
-            player.group_prefer = player.group_manager_prefer
-            
-            # Map the preference to a team
-            painting_mapping = {
-                'Left': 'Klee',
-                'Right': 'Kandinsky'
-            }
-            if player.group_prefer in painting_mapping:
-                player.group_team = painting_mapping[player.group_prefer]
-                print(f"✓ Team assigned: {player.group_team}")
-            else:
-                print(f"⚠️  Warning: Unknown preference value: {player.group_prefer}")
-                player.group_team = "Not assigned (Invalid preference)"
-            
-            # Randomly select an organization
-            player.group_organization = random.choice(C.CHALLENGE_CHOICES)
-            print(f"✓ Organization assigned: {player.group_organization}")
-        else:
-            print(f"⚠️  Warning: Could not find preference column or data")
-            player.group_prefer = "Not assigned"
-            player.group_team = "Not assigned"
-            player.group_organization = random.choice(C.CHALLENGE_CHOICES)
+        # Assign organization
+        player.group_organization = random.choice(C.CHALLENGE_CHOICES)
         
-        # Store manager's stated amount and correct amount for later use
+        # Store manager data
         stated_amount_column = column_indices.get('main1playerstated_amount', -1)
         correct_amount_column = column_indices.get('main1playerbriefing_correct_amou', -1)
         threshold_integer_column = column_indices.get('main1playerthreshold_integer', -1)
         
         if stated_amount_column != -1 and stated_amount_column < len(selected_manager):
             player.manager_stated_amount = selected_manager[stated_amount_column]
-            print(f"  Manager stated amount: {player.manager_stated_amount}")
         else:
             player.manager_stated_amount = "Not available"
         
         if correct_amount_column != -1 and correct_amount_column < len(selected_manager):
             player.manager_correct_amount = selected_manager[correct_amount_column]
-            print(f"  Manager correct amount: {player.manager_correct_amount}")
         else:
             player.manager_correct_amount = "Not available"
-            
-        # Store the threshold_integer value
+        
         if threshold_integer_column != -1 and threshold_integer_column < len(selected_manager):
             player.manager_threshold_integer = selected_manager[threshold_integer_column]
-            print(f"  Manager threshold: {player.manager_threshold_integer}")
         else:
-            player.manager_threshold_integer = "8"  # Default value
+            player.manager_threshold_integer = "8"
+        
+        # Mark this manager as used
+        player.session.vars['used_manager_ids'].append(manager_id)
         
         print(f"✓ MATCHING COMPLETE")
         print(f"{'='*50}\n")
@@ -495,27 +506,32 @@ class Painting(Page):
     
     @staticmethod
     def vars_for_template(player: Player):
-        # Safely access manager_prefer with a default value if it's None
         manager_prefer = player.field_maybe_none('group_manager_prefer') or 'Not available'
         return {
             'manager_prefer': manager_prefer,
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
         }
-    @staticmethod
-    def live_method(player:Player, data):
-        
-        return {player.id_in_group: 'success'}
     
-
-class GroupInfo(Page):
     @staticmethod
-    def vars_for_template(player: Player):
+    def before_next_page(player: Player, timeout_happened=False):
+        # After employee makes their choice, determine pair type
+        employee_prefer = player.prefer
+        manager_prefer = player.group_manager_prefer
         
-        return {
-            'team': player.field_maybe_none('group_team') or 'Not assigned',
-            'organization': player.field_maybe_none('group_organization') or 'Not assigned'
-        }
+        if employee_prefer == manager_prefer:
+            # Same pair
+            player.session.vars['same_pairs_count'] += 1
+            pair_type = "SAME"
+        else:
+            # Different pair
+            player.session.vars['different_pairs_count'] += 1
+            pair_type = "DIFFERENT"
+        
+        print(f"\n📊 PAIR TYPE RECORDED: {pair_type}")
+        print(f"   Employee: {employee_prefer}, Manager: {manager_prefer}")
+        print(f"   Total - Same: {player.session.vars['same_pairs_count']}, Different: {player.session.vars['different_pairs_count']}")
+        print(f"   Balance gap: {player.session.vars['same_pairs_count'] - player.session.vars['different_pairs_count']}\n")
     
 
 class Charity(Page):
