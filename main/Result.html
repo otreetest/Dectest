@@ -15,19 +15,19 @@ Result
 <p>
     <strong>This means:</strong> Your report was successful. Your manager's bonus has been <strong>forfeited</strong>. 
     Your manager reported {{ stated_amount }} correct answers (actual: {{ correct_amount }}), 
-    but will now receive only the base payment of <strong>$1.00</strong> (no bonus).
+    but will now receive only the base payment of <strong>£0.5 ($0.67)</strong> (no bonus).
 </p>
 {% else %}
 <p>
     <strong>This means:</strong> Your report was not successful. Your manager's bonus is <strong>retained</strong>. 
     Your manager reported {{ stated_amount }} correct answers (actual: {{ correct_amount }}) 
-    and will receive the base payment of $1.00 plus a bonus of <strong>${{ bonus_amount }}</strong>, 
+    and will receive the base payment of £0.5 ($0.67) plus a bonus of <strong>${{ bonus_amount }}</strong>, 
     for a total of <strong>${{ manager_total_payment }}</strong>.
 </p>
 {% endif %}
 
 <p>Your completion code is:</p>
-<p class="completion-code" style="font-weight: bold; color: red; text-align: center; font-size: 24px;">CZNO1JWO</p>
+<p class="completion-code" style="font-weight: bold; color: red; text-align: center; font-size: 24px;">C1BC94EY</p>
 
 {{ next_button }}
 

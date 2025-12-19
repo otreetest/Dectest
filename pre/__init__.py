@@ -57,6 +57,17 @@ class Preview(Page):
     form_fields = ['consent']
 
     @staticmethod
+    def before_next_page(player: Player, timeout_happened):
+        participant = player.participant
+        
+        # 从 URL 参数获取 Prolific ID 并保存
+        if participant.label:
+            participant.prolific_id = participant.label
+            print(f"DEBUG: Prolific ID saved: {participant.prolific_id}")
+        else:
+            print("DEBUG: No Participant Label found in URL.")
+
+    @staticmethod
     def app_after_this_page(player: Player, upcoming_apps):
         if not player.consent:
             return 'end'

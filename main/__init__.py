@@ -778,17 +778,17 @@ class Result(Page):
         except (ValueError, TypeError):
             stated_amount = 0
         
-        # Calculate bonus
-        if stated_amount > 12:
-            bonus_amount = (stated_amount - 12) * 0.50
+        # Calculate bonus with maximum cap (£0.37 per point above 8, max £1.5, 4 questions)
+        if stated_amount > 8:
+            bonus_amount = min((stated_amount - 8) * 0.5, 2)  # Cap at £1.5
         else:
             bonus_amount = 0
         
-        # Calculate total payment
+        # Calculate total payment (base £0.5 + bonus)
         if report_status:
-            manager_total_payment = 1.00  # Only base pay
+            manager_total_payment = 0.67  # Only base pay
         else:
-            manager_total_payment = 1.00 + bonus_amount  # Base + bonus
+            manager_total_payment = 0.67 + bonus_amount  # Base + bonus
         
         return {
             'manager_id': player.field_maybe_none('matched_manager_id') or 'Not matched',
