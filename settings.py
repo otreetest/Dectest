@@ -42,13 +42,13 @@ ROOMS = [
 ]
 DEMO_PAGE_INTRO_HTML = """ """
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'your_db_name',
-        'USER': 'your_user',
-        'PASSWORD': '20220602',
-        'HOST': 'localhost',
-        'PORT': '4023',
-    }
-}
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'your_db_name',
+#         'USER': 'your_user',
+#         'PASSWORD': '20220602',
+#         'HOST': 'localhost',
+#         'PORT': '4023',
+#     }
+# }

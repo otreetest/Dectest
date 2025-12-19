@@ -351,152 +351,110 @@ def get_value_from_row(row, column_indices, column_name, default=""):
 class Role(Page):
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
-        manager_data = player.session.vars.get('manager_data', [])
-        column_indices = player.session.vars.get('manager_data_columns', {})
-        
+        # 1. 确保 session 变量初始化
         if 'used_manager_ids' not in player.session.vars:
             player.session.vars['used_manager_ids'] = []
-        
-        # Initialize counters for balanced matching
         if 'same_pairs_count' not in player.session.vars:
             player.session.vars['same_pairs_count'] = 0
         if 'different_pairs_count' not in player.session.vars:
             player.session.vars['different_pairs_count'] = 0
-        
+
+        manager_data = player.session.vars.get('manager_data', [])
+        column_indices = player.session.vars.get('manager_data_columns', {})
         used_ids = player.session.vars['used_manager_ids']
-        
+
         print(f"\n{'='*50}")
-        print(f"MATCHING PLAYER {player.id_in_group}")
+        print(f"MATCHING PLAYER {player.id_in_group} (Participant: {player.participant.code})")
         print(f"{'='*50}")
-        print(f"Participant code: {player.participant.code}")
-        
-        # Check if we have manager data
-        if not manager_data:
-            print("❌ ERROR: No manager data available")
-            player.matched_manager_id = "ERROR_NO_DATA"
-            return
-        
-        # Get column indices
+
+        # 2. 基础数据校验
         id_column = column_indices.get('participantid_in_session', -1)
         prefer_column = column_indices.get('main1playerprefer', -1)
-        
-        if id_column == -1 or prefer_column == -1:
-            print("❌ ERROR: Required columns not found")
-            player.matched_manager_id = "ERROR_NO_COLUMN"
+
+        if not manager_data or id_column == -1 or prefer_column == -1:
+            print("❌ ERROR: Manager data or required columns missing")
+            player.matched_manager_id = "ERROR_CONFIG"
             return
-        
-        # Filter available managers
-        available_managers = [row for row in manager_data 
-                             if row[id_column] not in used_ids]
-        
+
+        # 3. 过滤出真正可用的经理（排除已使用的 ID）
+        available_managers = [row for row in manager_data if row[id_column] not in used_ids]
+
         if not available_managers:
-            print("❌ ERROR: No available managers")
+            print("❌ ERROR: No available managers left in the pool")
             player.matched_manager_id = "ERROR_NO_AVAILABLE"
             return
-        
-        # Get current balance status
+
+        # 4. 获取当前平衡状态
         same_count = player.session.vars['same_pairs_count']
         diff_count = player.session.vars['different_pairs_count']
         balance_gap = same_count - diff_count
         
-        print(f"Current balance - Same: {same_count}, Different: {diff_count}, Gap: {balance_gap}")
-        
-        # Separate available managers by their preference
+        # 预分类可用经理
         managers_left = [m for m in available_managers if m[prefer_column] == 'Left']
         managers_right = [m for m in available_managers if m[prefer_column] == 'Right']
-        
-        print(f"Available - Left managers: {len(managers_left)}, Right managers: {len(managers_right)}")
-        
-        # BALANCED MATCHING ALGORITHM
+
+        # 5. 平衡匹配算法实现
+        # 注意：此时员工还未做选择，我们通过控制“池子”的分配来影响最终平衡
         selected_manager = None
-        pair_type = None
         
-        # Strategy: maintain balance between same and different pairs
-        if balance_gap > 2:  # Too many same pairs
-            # Prioritize different pairs
-            print("⚖️ Balancing: Need more DIFFERENT pairs")
-            # Employee hasn't chosen yet, so we need to wait
-            # For now, we'll bias the selection but can't guarantee different
-            # We'll implement a probabilistic approach
-            
-            # Calculate probabilities based on available managers
-            total_available = len(available_managers)
-            prob_different = min(0.8, 0.5 + (balance_gap * 0.1))  # Increase probability
-            
-            if random.random() < prob_different:
-                # Try to select a manager with opposite preference
-                # Since we don't know employee's choice yet, we balance the pool
-                # Select from the minority group to increase different pair chances
-                if len(managers_left) < len(managers_right):
-                    selected_manager = random.choice(managers_left) if managers_left else random.choice(managers_right)
-                else:
-                    selected_manager = random.choice(managers_right) if managers_right else random.choice(managers_left)
+        # 如果 Same 太多，我们倾向于选目前可用数量较少的偏好组，反之亦然
+        if balance_gap > 2:  # Same 偏多
+            print(f"⚖️ Balancing: Gap={balance_gap}, favoring minority preference pool")
+            # 这里的逻辑是：如果两组经理都有，优先从人少的那组选，增加“不同”的概率
+            if managers_left and managers_right:
+                selected_manager = random.choice(managers_left if len(managers_left) < len(managers_right) else managers_right)
             else:
                 selected_manager = random.choice(available_managers)
-                
-        elif balance_gap < -2:  # Too many different pairs
-            # Prioritize same pairs
-            print("⚖️ Balancing: Need more SAME pairs")
-            
-            prob_same = min(0.8, 0.5 + (abs(balance_gap) * 0.1))
-            
-            if random.random() < prob_same:
-                # Select from the majority group to increase same pair chances
-                if len(managers_left) > len(managers_right):
-                    selected_manager = random.choice(managers_left) if managers_left else random.choice(managers_right)
-                else:
-                    selected_manager = random.choice(managers_right) if managers_right else random.choice(managers_left)
+        elif balance_gap < -2:  # Different 偏多
+            print(f"⚖️ Balancing: Gap={balance_gap}, favoring majority preference pool")
+            if managers_left and managers_right:
+                selected_manager = random.choice(managers_left if len(managers_left) > len(managers_right) else managers_right)
             else:
                 selected_manager = random.choice(available_managers)
-                
-        else:  # Balanced or close to balanced
-            print("✓ Currently balanced, random selection")
+        else:
+            print(f"✓ Balanced: Gap={balance_gap}, random selection")
             selected_manager = random.choice(available_managers)
-        
-        # Record the match
+
+        # 6. 执行锁定与数据记录
         manager_id = selected_manager[id_column]
+        
+        # 核心：立即更新 session.vars 锁定该经理，防止并发冲突
+        player.session.vars['used_manager_ids'].append(manager_id)
+        
+        # 记录到 Player 模型
         player.matched_manager_id = manager_id
         player.group_manager_id = manager_id
-        player.manager_match_order = len(used_ids) + 1
+        player.manager_match_order = len(player.session.vars['used_manager_ids'])
         player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        print(f"✓ Selected manager: {manager_id}")
-        
-        # Store manager's preference
+
+        # 存储经理属性
         player.group_manager_prefer = selected_manager[prefer_column]
         player.group_prefer = player.group_manager_prefer
         
-        # Map preference to team
+        # 映射 Team
         painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
         player.group_team = painting_mapping.get(player.group_prefer, "Not assigned")
         
-        # Assign organization
+        # 随机分配 Organization
         player.group_organization = random.choice(C.CHALLENGE_CHOICES)
-        
-        # Store manager data
-        stated_amount_column = column_indices.get('main1playerstated_amount', -1)
-        correct_amount_column = column_indices.get('main1playerbriefing_correct_amou', -1)
-        threshold_integer_column = column_indices.get('main1playerthreshold_integer', -1)
-        
-        if stated_amount_column != -1 and stated_amount_column < len(selected_manager):
-            player.manager_stated_amount = selected_manager[stated_amount_column]
-        else:
-            player.manager_stated_amount = "Not available"
-        
-        if correct_amount_column != -1 and correct_amount_column < len(selected_manager):
-            player.manager_correct_amount = selected_manager[correct_amount_column]
-        else:
-            player.manager_correct_amount = "Not available"
-        
-        if threshold_integer_column != -1 and threshold_integer_column < len(selected_manager):
-            player.manager_threshold_integer = selected_manager[threshold_integer_column]
-        else:
-            player.manager_threshold_integer = "8"
-        
-        # Mark this manager as used
-        player.session.vars['used_manager_ids'].append(manager_id)
-        
-        print(f"✓ MATCHING COMPLETE")
+
+        # 7. 提取经理表现数据（带容错处理）
+        def get_col_val(col_name, default):
+            idx = column_indices.get(col_name, -1)
+            if idx != -1 and idx < len(selected_manager):
+                return selected_manager[idx]
+            return default
+
+        player.manager_stated_amount = get_col_val('main1playerstated_amount', "Not available")
+        player.manager_correct_amount = get_col_val('main1playerbriefing_correct_amou', "Not available")
+        player.manager_threshold_integer = get_col_val('main1playerthreshold_integer', "8")
+
+        # 8. 关键：将重要数据同步到 participant.vars，确保跨 App 稳健
+        player.participant.vars['matched_manager_id'] = manager_id
+        player.participant.vars['group_team'] = player.group_team
+        player.participant.vars['group_organization'] = player.group_organization
+
+        print(f"✓ MATCHED: Manager {manager_id} | Pref: {player.group_manager_prefer} | Team: {player.group_team}")
         print(f"{'='*50}\n")
 
 
@@ -598,124 +556,101 @@ class Score(Page):
     
 class Understanding(Page):
     form_model = 'player'
-    form_fields = ['choiceE','choiceM','choiceT','choiceO']
-    
+    form_fields = ['choiceE', 'choiceM', 'choiceT', 'choiceO']
+
     @staticmethod
     def vars_for_template(player: Player):
         return {
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
         }
-    
+
     @staticmethod
     def error_message(player: Player, values):
-        # Increment attempts counter
+        # 1. 增加尝试次数记录（确保初始化）
         if player.understanding_attempts is None:
             player.understanding_attempts = 0
         player.understanding_attempts += 1
+
+        # 2. 定义映射关系与正确答案提取
+        painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
         
-        # Map the preferences to correct answers
-        painting_mapping = {
-            'Left': 'Klee',
-            'Right': 'Kandinsky'
+        # 提取字段值，增加兜底（防止 None 导致逻辑崩溃）
+        p_pref = player.field_maybe_none('prefer')
+        m_pref = player.field_maybe_none('group_prefer')
+        g_team = player.field_maybe_none('group_team')
+        g_org  = player.field_maybe_none('group_organization')
+
+        # 关键校验：如果关键匹配数据丢失，报错并阻止提交
+        if not all([p_pref, m_pref, g_team, g_org]):
+            return "Error: Missing group assignment data. Please refresh or contact support."
+
+        # 3. 计算正确答案
+        correct_answers = {
+            'choiceE': painting_mapping.get(p_pref),
+            'choiceM': painting_mapping.get(m_pref),
+            'choiceT': g_team,
+            'choiceO': g_org
         }
-        
-        # Get player's own preference
-        player_prefer = player.field_maybe_none('prefer')
-        if player_prefer:
-            correct_choiceE = painting_mapping.get(player_prefer, 'Unknown')
-        else:
-            correct_choiceE = 'Unknown'
-        
-        # Get manager's preference (which is also group_prefer)
-        manager_prefer = player.field_maybe_none('group_prefer')
-        if manager_prefer:
-            correct_choiceM = painting_mapping.get(manager_prefer, 'Unknown')
-        else:
-            correct_choiceM = 'Unknown'
-        
-        # Get team (already mapped to Klee/Kandinsky)
-        correct_choiceT = player.field_maybe_none('group_team') or 'Unknown'
-        
-        # Get organization
-        correct_choiceO = player.field_maybe_none('group_organization') or 'Unknown'
-        
-        # Debug print
-        print(f"\n=== Understanding Check Debug ===")
-        print(f"Player ID: {player.id_in_group}")
-        print(f"Attempt: {player.understanding_attempts}")
-        print(f"Correct E: {correct_choiceE}, Answer: {values.get('choiceE')}")
-        print(f"Correct M: {correct_choiceM}, Answer: {values.get('choiceM')}")
-        print(f"Correct T: {correct_choiceT}, Answer: {values.get('choiceT')}")
-        print(f"Correct O: {correct_choiceO}, Answer: {values.get('choiceO')}")
-        
-        # Check if all answers are correct
+
+        # 定义问题描述，用于友好的报错信息
+        field_labels = {
+            'choiceE': 'Question 1 (Your painting)',
+            'choiceM': 'Question 2 (Manager\'s painting)',
+            'choiceT': 'Question 3 (Team painting)',
+            'choiceO': 'Question 4 (Organization\'s charity)'
+        }
+
+        # 4. 循环对比答案并生成错误列表
         errors = []
-        
-        if values.get('choiceE') != correct_choiceE:
-            errors.append('Question 1 (Your painting): Incorrect answer.')
-        
-        if values.get('choiceM') != correct_choiceM:
-            errors.append('Question 2 (Manager\'s painting): Incorrect answer.')
-        
-        if values.get('choiceT') != correct_choiceT:
-            errors.append('Question 3 (Team painting): Incorrect answer.')
-        
-        if values.get('choiceO') != correct_choiceO:
-            errors.append('Question 4 (Organization\'s charity): Incorrect answer.')
-        
-        # If this is the first attempt and all answers are correct, mark it
-        if player.understanding_attempts == 1 and len(errors) == 0:
-            player.understanding_first_try_correct = True
-            print("First try correct!")
-        elif len(errors) == 0:
-            player.understanding_first_try_correct = False
-            print("Correct on later attempt")
-        
-        print(f"Errors found: {len(errors)}")
-        print("=" * 35)
-        
-        # Return errors if any exist
-        if errors:
-            error_message = '<strong>Please review your answers. The following questions are incorrect:</strong><br><br>'
-            error_message += '<br>'.join(errors)
-            error_message += '<br><br><em>Please correct your answers and try again.</em>'
+        for field, correct_val in correct_answers.items():
+            if values.get(field) != correct_val:
+                errors.append(field_labels[field])
+
+        # 5. 记录首答正确性并返回信息
+        if not errors:
+            # 全部正确
+            if player.understanding_attempts == 1:
+                player.understanding_first_try_correct = True
+            return None  # 验证通过，允许跳转
+        else:
+            # 有错误
+            if player.understanding_attempts == 1:
+                player.understanding_first_try_correct = False
+                
+            # 构建 HTML 报错信息
+            error_html = '<strong>Some answers are incorrect:</strong><ul style="margin-top: 5px;">'
+            for e in errors:
+                error_html += f'<li>{e}</li>'
+            error_html += '</ul><em>Please review the instructions and correct your choices.</em>'
             
-            return error_message
-        
-        # No errors means all correct - allow to proceed
-        return None
+            return error_html
 
 
 class Audit(Page):
     form_model = 'player'
     form_fields = ['report_probability']
+
     @staticmethod
-    def vars_for_template(player:Player, timeout_happened=False):
-        # Generate a random integer for the reporting mechanism
-        player.report_rand_int = random.randint(0, 100)
-        
-        # Safely get stored manager data with defaults if None
-        stated_amount = player.field_maybe_none('manager_stated_amount') or 'Not available'
-        correct_amount = player.field_maybe_none('manager_correct_amount') or 'Not available'
-        
-        
+    def vars_for_template(player: Player):
+        # 移除了在此处生成随机数的逻辑，改为在 before_next_page 中统一处理
         return {
-            'stated_amount': stated_amount,
-            'correct_amount': correct_amount,
+            'stated_amount': player.field_maybe_none('manager_stated_amount') or 'Not available',
+            'correct_amount': player.field_maybe_none('manager_correct_amount') or 'Not available',
             'manager_id': player.field_maybe_none('matched_manager_id') or 'Not matched',
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
         }
+
     @staticmethod
-    def before_next_page(player:Player, timeout_happened=False):
-        # Determine if the report is successful based on the probability
+    def before_next_page(player: Player, timeout_happened=False):
+        # 在此处生成随机数并判定，确保结果存入 player 实例而非 session 实例
+        player.report_rand_int = random.randint(0, 100)
+        
         if player.report_probability > player.report_rand_int:
             player.report = True
-            player.session.vars['report'] = True
         else:
             player.report = False
-            player.session.vars['report'] = False
 
 
 class Survey_m(Page):
@@ -786,35 +721,35 @@ class Info(Page):
 class Result(Page):
     @staticmethod
     def vars_for_template(player: Player):
-        report_status = player.session.vars.get('report', False)
+        # 核心修复：从 player.report 获取状态，而非 session.vars
+        report_status = player.report 
         
-        # Get manager's stated amount
         try:
             stated_amount = int(player.manager_stated_amount)
         except (ValueError, TypeError):
             stated_amount = 0
         
-        # Calculate bonus with maximum cap (£0.37 per point above 8, max £1.5, 4 questions)
+        # 这里的计算逻辑建议根据你的实验手册核对
         if stated_amount > 8:
-            bonus_amount = min((stated_amount - 8) * 0.5, 2)  # Cap at £1.5
+            bonus_amount = min((stated_amount - 8) * 0.5, 2.0)
         else:
-            bonus_amount = 0
+            bonus_amount = 0.0
         
-        # Calculate total payment (base £0.5 + bonus)
+        # 根据举报状态决定经理支付（此处逻辑仅供数据展示）
         if report_status:
-            manager_total_payment = 0.67  # Only base pay
+            manager_total_payment = 0.67 
         else:
-            manager_total_payment = 0.67 + bonus_amount  # Base + bonus
+            manager_total_payment = 0.67 + bonus_amount
         
         return {
+            'report': report_status,
+            'bonus_amount': f"{bonus_amount:.2f}",
+            'manager_total_payment': f"{manager_total_payment:.2f}",
             'manager_id': player.field_maybe_none('matched_manager_id') or 'Not matched',
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
-            'report': report_status,
             'stated_amount': player.manager_stated_amount,
             'correct_amount': player.manager_correct_amount,
-            'bonus_amount': f"{bonus_amount:.2f}",
-            'manager_total_payment': f"{manager_total_payment:.2f}",
             'player_payoff': player.payoff
         }
 
