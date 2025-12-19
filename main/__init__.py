@@ -129,72 +129,159 @@ class Subsession(BaseSubsession):
     pass
 
 
-def creating_session(self:Subsession):
-    # Load manager data from CSV using standard library
-    if os.path.exists(C.MANAGER_DATA_PATH):
-        try:
-            # Load the CSV file
-            manager_data = []
-            header = []
-            with open(C.MANAGER_DATA_PATH, 'r', encoding='utf-8-sig') as csvfile:
-                csv_reader = csv.reader(csvfile)
-                header = next(csv_reader)  # Get header row
-                for row in csv_reader:
-                    manager_data.append(row)
-            # Create a dictionary to map column names to indices
-            column_indices = {name: idx for idx, name in enumerate(header)}
-
-            # Store the data in session vars
-            self.session.vars['manager_data'] = manager_data
-            self.session.vars['manager_data_header'] = header
-            self.session.vars['manager_data_columns'] = column_indices
-            
-            self.session.vars['used_manager_ids'] = []
-            
-            self.session.vars['session_start_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            num_players = len(self.get_players())
-            num_managers = len(manager_data)
-            print(f"\n{'='*50}")
-            print(f"SESSION INITIALIZATION")
-            print(f"{'='*50}")
-            print(f"Session code: {self.session.code}")
-            print(f"Session start: {self.session.vars['session_start_time']}")
-            print(f"Players in session: {num_players}")
-            print(f"Managers available: {num_managers}")
-            print(f"CSV columns: {header}")
-            
-            if num_managers < num_players:
-                print(f"\n⚠️  WARNING: Not enough managers!")
-                print(f"   Need: {num_players}")
-                print(f"   Have: {num_managers}")
-                print(f"   Shortage: {num_players - num_managers}")
-            else:
-                print(f"\n✓ Sufficient managers available")
-                print(f"  Surplus: {num_managers - num_players}")
-            print(f"{'='*50}\n")
-                
-        except Exception as e:
-            print(f"\n❌ Error loading manager data: {e}")
-            import traceback
-            traceback.print_exc()
-            # Create empty data as fallback
-            self.session.vars['manager_data'] = []
-            self.session.vars['manager_data_header'] = []
-            self.session.vars['manager_data_columns'] = {}
-            self.session.vars['used_manager_ids'] = []
-    else:
+def creating_session(subsession: Subsession):
+    """
+    预分配方案：在会话创建时就完成所有经理-员工的匹配
+    这样可以完全避免并发问题
+    """
+    session = subsession.session
+    
+    # 初始化 session 变量
+    session.vars['session_start_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    session.vars['same_pairs_count'] = 0
+    session.vars['different_pairs_count'] = 0
+    
+    # 加载 CSV 数据
+    if not os.path.exists(C.MANAGER_DATA_PATH):
         print(f"\n❌ Manager data file not found: {C.MANAGER_DATA_PATH}")
         print(f"   Current directory: {current_dir}")
         print(f"   Please ensure input.csv exists in the correct location")
-        # Create empty data as fallback
-        self.session.vars['manager_data'] = []
-        self.session.vars['manager_data_header'] = []
-        self.session.vars['manager_data_columns'] = {}
-        self.session.vars['used_manager_ids'] = []
+        return
+    
+    try:
+        # 读取 CSV
+        manager_data = []
+        header = []
+        with open(C.MANAGER_DATA_PATH, 'r', encoding='utf-8-sig') as csvfile:
+            csv_reader = csv.reader(csvfile)
+            header = next(csv_reader)
+            for row in csv_reader:
+                manager_data.append(row)
+        
+        column_indices = {name: idx for idx, name in enumerate(header)}
+        
+        # 获取所有玩家
+        players = subsession.get_players()
+        num_players = len(players)
+        num_managers = len(manager_data)
+        
+        print(f"\n{'='*50}")
+        print(f"SESSION INITIALIZATION - PRE-ALLOCATION")
+        print(f"{'='*50}")
+        print(f"Session code: {session.code}")
+        print(f"Session start: {session.vars['session_start_time']}")
+        print(f"Players in session: {num_players}")
+        print(f"Managers available: {num_managers}")
+        print(f"CSV columns: {header}")
+        
+        if num_managers < num_players:
+            print(f"\n⚠️  WARNING: Not enough managers!")
+            print(f"   Need: {num_players}")
+            print(f"   Have: {num_managers}")
+            print(f"   Shortage: {num_players - num_managers}")
+            print(f"\n   Proceeding with available managers...")
+        else:
+            print(f"\n✓ Sufficient managers available")
+            print(f"  Surplus: {num_managers - num_players}")
+        
+        # 关键列索引
+        id_column = column_indices.get('participantid_in_session', -1)
+        prefer_column = column_indices.get('main1playerprefer', -1)
+        stated_column = column_indices.get('main1playerstated_amount', -1)
+        correct_column = column_indices.get('main1playerbriefing_correct_amou', -1)
+        threshold_column = column_indices.get('main1playerthreshold_integer', -1)
+        
+        if id_column == -1 or prefer_column == -1:
+            print("❌ ERROR: Required columns not found in CSV")
+            return
+        
+        # 分离 Left 和 Right 经理
+        managers_left = [m for m in manager_data if m[prefer_column] == 'Left']
+        managers_right = [m for m in manager_data if m[prefer_column] == 'Right']
+        
+        print(f"\nManager distribution:")
+        print(f"  Left preference: {len(managers_left)}")
+        print(f"  Right preference: {len(managers_right)}")
+        
+        # 打乱两组经理
+        random.shuffle(managers_left)
+        random.shuffle(managers_right)
+        
+        # 平衡分配策略：交替分配 Left 和 Right 经理
+        assigned_managers = []
+        left_idx = 0
+        right_idx = 0
+        
+        for i in range(num_players):
+            # 交替分配，确保平衡
+            if i % 2 == 0:
+                # 优先分配 Left
+                if left_idx < len(managers_left):
+                    assigned_managers.append(managers_left[left_idx])
+                    left_idx += 1
+                elif right_idx < len(managers_right):
+                    assigned_managers.append(managers_right[right_idx])
+                    right_idx += 1
+            else:
+                # 优先分配 Right
+                if right_idx < len(managers_right):
+                    assigned_managers.append(managers_right[right_idx])
+                    right_idx += 1
+                elif left_idx < len(managers_left):
+                    assigned_managers.append(managers_left[left_idx])
+                    left_idx += 1
+        
+        # 分配给每个玩家
+        painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
+        
+        for i, player in enumerate(players):
+            if i < len(assigned_managers):
+                manager_row = assigned_managers[i]
+                
+                # 提取经理数据
+                manager_id = manager_row[id_column]
+                manager_prefer = manager_row[prefer_column]
+                
+                # 安全提取其他字段
+                def get_value(col_idx, default="Not available"):
+                    if col_idx != -1 and col_idx < len(manager_row):
+                        return manager_row[col_idx]
+                    return default
+                
+                manager_stated = get_value(stated_column)
+                manager_correct = get_value(correct_column)
+                manager_threshold = get_value(threshold_column, "8")
+                
+                # 存储到 participant.vars（跨 app 持久化）
+                player.participant.vars['assigned_manager'] = {
+                    'id': manager_id,
+                    'prefer': manager_prefer,
+                    'team': painting_mapping.get(manager_prefer, "Not assigned"),
+                    'organization': random.choice(C.CHALLENGE_CHOICES),
+                    'stated_amount': manager_stated,
+                    'correct_amount': manager_correct,
+                    'threshold_integer': manager_threshold,
+                    'assignment_order': i + 1,
+                    'assignment_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+                print(f"✓ Player {i+1} assigned Manager {manager_id} (Prefer: {manager_prefer})")
+            else:
+                print(f"❌ Player {i+1} could not be assigned (no managers left)")
+        
+        print(f"\n{'='*50}")
+        print(f"PRE-ALLOCATION COMPLETE")
+        print(f"{'='*50}\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error during pre-allocation: {e}")
+        import traceback
+        traceback.print_exc()
+
 
 class Group(BaseGroup):
     pass
+
 
 class Player(BasePlayer):
     group_prefer = models.StringField()
@@ -241,28 +328,28 @@ class Player(BasePlayer):
     choiceE = models.CharField(
         label="<img src='/static/img/PaulKlee.jpg' style='width: 160px; max-width: 100%;'>  <img src='/static/img/VassilyKandinsky.jpg' style='width: 160px; max-width: 100%;'><br><br>1) Please indicate the painting that <b>you selected</b> at the beginning of the game:<br>",
         choices=["Klee", "Kandinsky"],
-        widget=widgets.RadioSelectHorizontal,  # Changed from RadioSelect to RadioSelectHorizontal
+        widget=widgets.RadioSelectHorizontal,
         blank=False
     )
 
     choiceM = models.CharField(
         label="2) Please indicate the painting that <b>your manager selected </b>at the beginning of the game:<br>",
         choices=["Klee", "Kandinsky"],
-        widget=widgets.RadioSelectHorizontal,  # Changed from RadioSelect to RadioSelectHorizontal
+        widget=widgets.RadioSelectHorizontal,
         blank=False
     )
 
     choiceT = models.CharField(
         label="3) Please indicate the painting that <b>represented your team</b>:<br>",
         choices=["Klee", "Kandinsky"],
-        widget=widgets.RadioSelectHorizontal,  # Changed from RadioSelect to RadioSelectHorizontal
+        widget=widgets.RadioSelectHorizontal,
         blank=False
     )
 
     choiceO = models.CharField(
         label="<br><img src='/static/img/RedCross.png' style='width: 160px; max-width: 100%;'>  <img src='/static/img/NRA.png' style='width: 160px; max-width: 100%;'><br><br>4) Please indicate the charity that your <b>organization donated to</b>:<br>",
         choices=["Red Cross", "NRA"],
-        widget=widgets.RadioSelectHorizontal,  # Changed from RadioSelect to RadioSelectHorizontal
+        widget=widgets.RadioSelectHorizontal,
         blank=False
     )
 
@@ -336,125 +423,45 @@ class Player(BasePlayer):
     )
 
 
-# Helper functions for working with CSV data
-def get_value_from_row(row, column_indices, column_name, default=""):
-    """Helper function to get a value from a row using column name"""
-    if column_name in column_indices:
-        idx = column_indices[column_name]
-        if idx < len(row):
-            return row[idx]
-    return default
-
-
 # PAGES
 
 class Role(Page):
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
-        # 1. 确保 session 变量初始化
-        if 'used_manager_ids' not in player.session.vars:
-            player.session.vars['used_manager_ids'] = []
-        if 'same_pairs_count' not in player.session.vars:
-            player.session.vars['same_pairs_count'] = 0
-        if 'different_pairs_count' not in player.session.vars:
-            player.session.vars['different_pairs_count'] = 0
-
-        manager_data = player.session.vars.get('manager_data', [])
-        column_indices = player.session.vars.get('manager_data_columns', {})
-        used_ids = player.session.vars['used_manager_ids']
-
+        """
+        从 participant.vars 中读取预分配的经理数据
+        不再进行动态分配，完全避免并发问题
+        """
+        assigned = player.participant.vars.get('assigned_manager')
+        
+        if not assigned:
+            print(f"❌ ERROR: Player {player.id_in_group} has no assigned manager")
+            player.matched_manager_id = "ERROR_NO_ASSIGNMENT"
+            return
+        
+        # 直接读取预分配的数据
+        player.matched_manager_id = assigned['id']
+        player.group_manager_id = assigned['id']
+        player.group_manager_prefer = assigned['prefer']
+        player.group_prefer = assigned['prefer']
+        player.group_team = assigned['team']
+        player.group_organization = assigned['organization']
+        
+        player.manager_stated_amount = assigned['stated_amount']
+        player.manager_correct_amount = assigned['correct_amount']
+        player.manager_threshold_integer = assigned['threshold_integer']
+        
+        player.manager_match_order = assigned['assignment_order']
+        player.manager_match_timestamp = assigned['assignment_timestamp']
+        
         print(f"\n{'='*50}")
-        print(f"MATCHING PLAYER {player.id_in_group} (Participant: {player.participant.code})")
+        print(f"LOADING PRE-ASSIGNED MANAGER FOR PLAYER {player.id_in_group}")
         print(f"{'='*50}")
-
-        # 2. 基础数据校验
-        id_column = column_indices.get('participantid_in_session', -1)
-        prefer_column = column_indices.get('main1playerprefer', -1)
-
-        if not manager_data or id_column == -1 or prefer_column == -1:
-            print("❌ ERROR: Manager data or required columns missing")
-            player.matched_manager_id = "ERROR_CONFIG"
-            return
-
-        # 3. 过滤出真正可用的经理（排除已使用的 ID）
-        available_managers = [row for row in manager_data if row[id_column] not in used_ids]
-
-        if not available_managers:
-            print("❌ ERROR: No available managers left in the pool")
-            player.matched_manager_id = "ERROR_NO_AVAILABLE"
-            return
-
-        # 4. 获取当前平衡状态
-        same_count = player.session.vars['same_pairs_count']
-        diff_count = player.session.vars['different_pairs_count']
-        balance_gap = same_count - diff_count
-        
-        # 预分类可用经理
-        managers_left = [m for m in available_managers if m[prefer_column] == 'Left']
-        managers_right = [m for m in available_managers if m[prefer_column] == 'Right']
-
-        # 5. 平衡匹配算法实现
-        # 注意：此时员工还未做选择，我们通过控制“池子”的分配来影响最终平衡
-        selected_manager = None
-        
-        # 如果 Same 太多，我们倾向于选目前可用数量较少的偏好组，反之亦然
-        if balance_gap > 2:  # Same 偏多
-            print(f"⚖️ Balancing: Gap={balance_gap}, favoring minority preference pool")
-            # 这里的逻辑是：如果两组经理都有，优先从人少的那组选，增加“不同”的概率
-            if managers_left and managers_right:
-                selected_manager = random.choice(managers_left if len(managers_left) < len(managers_right) else managers_right)
-            else:
-                selected_manager = random.choice(available_managers)
-        elif balance_gap < -2:  # Different 偏多
-            print(f"⚖️ Balancing: Gap={balance_gap}, favoring majority preference pool")
-            if managers_left and managers_right:
-                selected_manager = random.choice(managers_left if len(managers_left) > len(managers_right) else managers_right)
-            else:
-                selected_manager = random.choice(available_managers)
-        else:
-            print(f"✓ Balanced: Gap={balance_gap}, random selection")
-            selected_manager = random.choice(available_managers)
-
-        # 6. 执行锁定与数据记录
-        manager_id = selected_manager[id_column]
-        
-        # 核心：立即更新 session.vars 锁定该经理，防止并发冲突
-        player.session.vars['used_manager_ids'].append(manager_id)
-        
-        # 记录到 Player 模型
-        player.matched_manager_id = manager_id
-        player.group_manager_id = manager_id
-        player.manager_match_order = len(player.session.vars['used_manager_ids'])
-        player.manager_match_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # 存储经理属性
-        player.group_manager_prefer = selected_manager[prefer_column]
-        player.group_prefer = player.group_manager_prefer
-        
-        # 映射 Team
-        painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
-        player.group_team = painting_mapping.get(player.group_prefer, "Not assigned")
-        
-        # 随机分配 Organization
-        player.group_organization = random.choice(C.CHALLENGE_CHOICES)
-
-        # 7. 提取经理表现数据（带容错处理）
-        def get_col_val(col_name, default):
-            idx = column_indices.get(col_name, -1)
-            if idx != -1 and idx < len(selected_manager):
-                return selected_manager[idx]
-            return default
-
-        player.manager_stated_amount = get_col_val('main1playerstated_amount', "Not available")
-        player.manager_correct_amount = get_col_val('main1playerbriefing_correct_amou', "Not available")
-        player.manager_threshold_integer = get_col_val('main1playerthreshold_integer', "8")
-
-        # 8. 关键：将重要数据同步到 participant.vars，确保跨 App 稳健
-        player.participant.vars['matched_manager_id'] = manager_id
-        player.participant.vars['group_team'] = player.group_team
-        player.participant.vars['group_organization'] = player.group_organization
-
-        print(f"✓ MATCHED: Manager {manager_id} | Pref: {player.group_manager_prefer} | Team: {player.group_team}")
+        print(f"Manager ID: {player.matched_manager_id}")
+        print(f"Manager Preference: {player.group_manager_prefer}")
+        print(f"Team: {player.group_team}")
+        print(f"Organization: {player.group_organization}")
+        print(f"Assignment Order: {player.manager_match_order}")
         print(f"{'='*50}\n")
 
 
@@ -464,25 +471,26 @@ class Painting(Page):
     
     @staticmethod
     def vars_for_template(player: Player):
-        manager_prefer = player.field_maybe_none('group_manager_prefer') or 'Not available'
         return {
-            'manager_prefer': manager_prefer,
+            'manager_prefer': player.field_maybe_none('group_manager_prefer') or 'Not available',
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
         }
     
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
-        # After employee makes their choice, determine pair type
+        """
+        员工选择后，记录配对类型
+        这里的计数更新仍有轻微竞态风险，但不影响核心分配逻辑
+        如需完全避免，可以在 Result 页面统一计算
+        """
         employee_prefer = player.prefer
         manager_prefer = player.group_manager_prefer
         
         if employee_prefer == manager_prefer:
-            # Same pair
             player.session.vars['same_pairs_count'] += 1
             pair_type = "SAME"
         else:
-            # Different pair
             player.session.vars['different_pairs_count'] += 1
             pair_type = "DIFFERENT"
         
@@ -490,15 +498,15 @@ class Painting(Page):
         print(f"   Employee: {employee_prefer}, Manager: {manager_prefer}")
         print(f"   Total - Same: {player.session.vars['same_pairs_count']}, Different: {player.session.vars['different_pairs_count']}")
         print(f"   Balance gap: {player.session.vars['same_pairs_count'] - player.session.vars['different_pairs_count']}\n")
-    
+
 
 class Charity(Page):
     pass
 
+
 class Organization(Page):
     @staticmethod
     def vars_for_template(player: Player):
-        group = player.group
         return {
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
             'team': player.field_maybe_none('group_team') or 'Not assigned'
@@ -508,7 +516,6 @@ class Organization(Page):
 class MatchingResult(Page):
     @staticmethod
     def vars_for_template(player: Player):
-        
         return {
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
@@ -520,7 +527,6 @@ class MatchingResult(Page):
 class BeforeIQTest(Page):
     @staticmethod
     def vars_for_template(player: Player):
-        
         return {
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
@@ -530,21 +536,20 @@ class BeforeIQTest(Page):
 class MisreportingRule2(Page):
     @staticmethod
     def vars_for_template(player: Player):
-        
         return {
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
-            'threshold_integer': player.field_maybe_none('manager_threshold_integer') or '8'  # Default to 8 if not found
+            'threshold_integer': player.field_maybe_none('manager_threshold_integer') or '8'
         }
+
 
 class Score(Page):
     form_model = 'player'
+    
     @staticmethod
     def vars_for_template(player: Player, timeout_happened=False):
-        # Safely get stored manager data with defaults if None
         stated_amount = player.field_maybe_none('manager_stated_amount') or 'Not available'
         correct_amount = player.field_maybe_none('manager_correct_amount') or 'Not available'
-        
         
         return {
             'stated_amount': stated_amount,
@@ -553,7 +558,8 @@ class Score(Page):
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned'
         }
-    
+
+
 class Understanding(Page):
     form_model = 'player'
     form_fields = ['choiceE', 'choiceM', 'choiceT', 'choiceO']
@@ -567,25 +573,20 @@ class Understanding(Page):
 
     @staticmethod
     def error_message(player: Player, values):
-        # 1. 增加尝试次数记录（确保初始化）
         if player.understanding_attempts is None:
             player.understanding_attempts = 0
         player.understanding_attempts += 1
 
-        # 2. 定义映射关系与正确答案提取
         painting_mapping = {'Left': 'Klee', 'Right': 'Kandinsky'}
         
-        # 提取字段值，增加兜底（防止 None 导致逻辑崩溃）
         p_pref = player.field_maybe_none('prefer')
         m_pref = player.field_maybe_none('group_prefer')
         g_team = player.field_maybe_none('group_team')
         g_org  = player.field_maybe_none('group_organization')
 
-        # 关键校验：如果关键匹配数据丢失，报错并阻止提交
         if not all([p_pref, m_pref, g_team, g_org]):
             return "Error: Missing group assignment data. Please refresh or contact support."
 
-        # 3. 计算正确答案
         correct_answers = {
             'choiceE': painting_mapping.get(p_pref),
             'choiceM': painting_mapping.get(m_pref),
@@ -593,7 +594,6 @@ class Understanding(Page):
             'choiceO': g_org
         }
 
-        # 定义问题描述，用于友好的报错信息
         field_labels = {
             'choiceE': 'Question 1 (Your painting)',
             'choiceM': 'Question 2 (Manager\'s painting)',
@@ -601,24 +601,19 @@ class Understanding(Page):
             'choiceO': 'Question 4 (Organization\'s charity)'
         }
 
-        # 4. 循环对比答案并生成错误列表
         errors = []
         for field, correct_val in correct_answers.items():
             if values.get(field) != correct_val:
                 errors.append(field_labels[field])
 
-        # 5. 记录首答正确性并返回信息
         if not errors:
-            # 全部正确
             if player.understanding_attempts == 1:
                 player.understanding_first_try_correct = True
-            return None  # 验证通过，允许跳转
+            return None
         else:
-            # 有错误
             if player.understanding_attempts == 1:
                 player.understanding_first_try_correct = False
                 
-            # 构建 HTML 报错信息
             error_html = '<strong>Some answers are incorrect:</strong><ul style="margin-top: 5px;">'
             for e in errors:
                 error_html += f'<li>{e}</li>'
@@ -633,7 +628,6 @@ class Audit(Page):
 
     @staticmethod
     def vars_for_template(player: Player):
-        # 移除了在此处生成随机数的逻辑，改为在 before_next_page 中统一处理
         return {
             'stated_amount': player.field_maybe_none('manager_stated_amount') or 'Not available',
             'correct_amount': player.field_maybe_none('manager_correct_amount') or 'Not available',
@@ -644,7 +638,6 @@ class Audit(Page):
 
     @staticmethod
     def before_next_page(player: Player, timeout_happened=False):
-        # 在此处生成随机数并判定，确保结果存入 player 实例而非 session 实例
         player.report_rand_int = random.randint(0, 100)
         
         if player.report_probability > player.report_rand_int:
@@ -659,14 +652,12 @@ class Survey_m(Page):
     
     @staticmethod
     def vars_for_template(player: Player):
-        
         return {
             'team': player.field_maybe_none('group_team') or 'Not assigned',
             'organization': player.field_maybe_none('group_organization') or 'Not assigned',
             'player_prefer': player.field_maybe_none('prefer'),
             'group_prefer': player.field_maybe_none('group_prefer')
         }
-
 
 class Survey_o(Page):
     form_model = 'player'
